@@ -5,8 +5,11 @@ import (
 	"image"
 	"image/color"
 	_ "image/jpeg"
+	"log"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 func Histo(im image.Image) map[uint8]int {
@@ -131,6 +134,52 @@ func diffFiles(file1, file2 string) (float64, error) {
 	return diff3(im1, im2), nil
 }
 
+type compRes struct {
+	file string
+	match float64
+}
+type matches map[string][]*compRes
+
+var isJpeg = regexp.MustCompile(`.*\.(jpg|jpeg)$`)
+
+func diffDir(dirpath string) (matches, error) {
+	results := make(matches)
+	f, err := os.Open(dirpath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	names, err := f.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+	for _, v1 := range names {
+		if !isJpeg.MatchString(strings.ToLower(v1)) {
+			continue
+		}
+		var res []*compRes
+		fv1 := filepath.Join(dirpath, v1)
+		for _, v2 := range names {
+			if v1 == v2 {
+				continue
+			}
+			if !isJpeg.MatchString(strings.ToLower(v2)) {
+				continue
+			}
+			fv2 := filepath.Join(dirpath, v2)
+			match, err := diffFiles(fv1, fv2)
+			if err != nil {
+				log.Print(err)
+				continue
+			}
+			res = append(res, &compRes{fv2, match})
+			fmt.Printf("(%v, %v) : %f\n", v1, v2, match)
+		}
+		results[fv1] = res
+	}
+	return results, nil
+}
+
 func main() {
 /*
 	err := printHisto("/home/mpl/Desktop/IMG_2336.JPG")
@@ -141,7 +190,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-*/
 	d, err := diffFiles("/home/mpl/Desktop/IMG_2336.JPG", "/home/mpl/Desktop/IMG_2337.JPG")
 	if err != nil {
 		panic(err)
@@ -152,6 +200,11 @@ func main() {
 		panic(err)
 	}
 	println(d)
+*/
+	_, err := diffDir("/home/mpl/Desktop/pics/passur/pleubian/")
+	if err != nil {
+		panic(err)
+	}
 }
 
 /*
@@ -162,4 +215,26 @@ diff3: +8.978442e-001 ; +2.800825e-001
 5000 5000 6
 4998 5008 0
 
+
+(20110427_001.jpg, 20110430_001.jpg) : 0.449549
+(20110427_001.jpg, 20110430_003.jpg) : 0.401911
+(20110427_001.jpg, 20110424_001.jpg) : 0.528231
+(20110427_001.jpg, 20110430_002.jpg) : 0.464364
+(20110430_001.jpg, 20110427_001.jpg) : 0.449549
+(20110430_001.jpg, 20110430_003.jpg) : 0.471735
+(20110430_001.jpg, 20110424_001.jpg) : 0.322794
+(20110430_001.jpg, 20110430_002.jpg) : 0.435669
+(20110430_003.jpg, 20110427_001.jpg) : 0.403487
+(20110430_003.jpg, 20110430_001.jpg) : 0.473585
+(20110430_003.jpg, 20110424_001.jpg) : 0.308662
+(20110430_003.jpg, 20110430_002.jpg) : 0.399664
+(20110424_001.jpg, 20110427_001.jpg) : 0.528231
+(20110424_001.jpg, 20110430_001.jpg) : 0.322794
+(20110424_001.jpg, 20110430_003.jpg) : 0.307457
+(20110424_001.jpg, 20110430_002.jpg) : 0.399792
+(20110430_002.jpg, 20110427_001.jpg) : 0.464364
+(20110430_002.jpg, 20110430_001.jpg) : 0.435669
+(20110430_002.jpg, 20110430_003.jpg) : 0.398103
+(20110430_002.jpg, 20110424_001.jpg) : 0.399792
+-> diff3 not convincing
 */
