@@ -113,74 +113,6 @@ func diff3(im1, im2 image.Image) float64 {
 	return float64(cumratio) / float64(len(histo1))
 }
 
-func diffFiles(file1, file2 string) (float64, error) {
-	f, err := os.Open(file1)
-	if err != nil {
-		return 0., err
-	}
-	defer f.Close()
-	im1, _, err := image.Decode(f)
-	if err != nil {
-		return 0., err
-	}
-	g, err := os.Open(file2)
-	if err != nil {
-		return 0., err
-	}
-	defer g.Close()
-	im2, _, err := image.Decode(g)
-	if err != nil {
-		return 0., err
-	}
-	return diff4(im1, im2), nil
-}
-
-type compRes struct {
-	file string
-	match float64
-}
-type matches map[string][]*compRes
-
-var isJpeg = regexp.MustCompile(`.*\.(jpg|jpeg)$`)
-
-func diffDir(dirpath string) (matches, error) {
-	results := make(matches)
-	f, err := os.Open(dirpath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	names, err := f.Readdirnames(-1)
-	if err != nil {
-		return nil, err
-	}
-	for k1, v1 := range names {
-		if !isJpeg.MatchString(strings.ToLower(v1)) {
-			continue
-		}
-		var res []*compRes
-		fv1 := filepath.Join(dirpath, v1)
-		for k2, v2 := range names {
-			if k2 <= k1 {
-				continue
-			}
-			if !isJpeg.MatchString(strings.ToLower(v2)) {
-				continue
-			}
-			fv2 := filepath.Join(dirpath, v2)
-			match, err := diffFiles(fv1, fv2)
-			if err != nil {
-				log.Print(err)
-				continue
-			}
-			res = append(res, &compRes{fv2, match})
-			fmt.Printf("(%v, %v) : %f\n", v1, v2, match)
-		}
-		results[fv1] = res
-	}
-	return results, nil
-}
-
 func mean(x []float64) float64 {
 	sx := 0.0
 	for _, v := range x {
@@ -223,32 +155,126 @@ func diff4(im1, im2 image.Image) float64 {
 	return xCorrelation(x, y)
 }
 
+func diffFiles(file1, file2 string) (float64, error) {
+	f, err := os.Open(file1)
+	if err != nil {
+		return 0., err
+	}
+	defer f.Close()
+	im1, _, err := image.Decode(f)
+	if err != nil {
+		return 0., err
+	}
+	g, err := os.Open(file2)
+	if err != nil {
+		return 0., err
+	}
+	defer g.Close()
+	im2, _, err := image.Decode(g)
+	if err != nil {
+		return 0., err
+	}
+	return diff4(im1, im2), nil
+}
+
+type compRes struct {
+	file string
+	match float64
+}
+
+type matches map[string][]*compRes
+
+var isJpeg = regexp.MustCompile(`.*\.(jpg|jpeg)$`)
+
+func diffDir(dirpath string) (matches, error) {
+	results := make(matches)
+	f, err := os.Open(dirpath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	names, err := f.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+	for k1, v1 := range names {
+		if !isJpeg.MatchString(strings.ToLower(v1)) {
+			continue
+		}
+		var res []*compRes
+		fv1 := filepath.Join(dirpath, v1)
+		for k2, v2 := range names {
+			if k2 <= k1 {
+				continue
+			}
+			if !isJpeg.MatchString(strings.ToLower(v2)) {
+				continue
+			}
+			fv2 := filepath.Join(dirpath, v2)
+			match, err := diffFiles(fv1, fv2)
+			if err != nil {
+				log.Print(err)
+				continue
+			}
+			res = append(res, &compRes{fv2, match})
+			fmt.Printf("(%v, %v) : %f\n", v1, v2, match)
+		}
+		results[fv1] = res
+	}
+	return results, nil
+}
+
+func uniquify(m matches) map[string]*compRes {
+	bestpairs := make(map[string]*compRes)
+	for k1,v1 := range m {
+		best := 0.
+		keep := 0
+		for k, cres := range v1 {
+			if math.Abs(cres.match) > best {
+				best = math.Abs(cres.match)
+				keep = k
+			}
+		}
+		fmt.Printf("(%v, %v) : %f\n", k1, v1[keep].file, v1[keep].match)
+		bestpairs[k1] = v1[keep]
+	}
+	return bestpairs
+}
+
+
 func main() {
 /*
-	err := printHisto("/home/mpl/Desktop/IMG_2336.JPG")
+	allpairs, err := diffDir("/home/mpl/Pictures/pleubian/")
 	if err != nil {
 		panic(err)
 	}
-	err = printHisto("/home/mpl/Desktop/IMG_2337.JPG")
-	if err != nil {
-		panic(err)
-	}
-	d, err := diffFiles("/home/mpl/Desktop/IMG_2336.JPG", "/home/mpl/Desktop/IMG_2337.JPG")
-	if err != nil {
-		panic(err)
-	}
-	println(d)
-	d, err = diffFiles("/home/mpl/Desktop/IMG_2336.JPG", "/home/mpl/Desktop/20110430_002.jpg")
-	if err != nil {
-		panic(err)
-	}
-	println(d)
 */
-	_, err := diffDir("/home/mpl/Pictures/pleubian/")
-	if err != nil {
-		panic(err)
+	allpairstest := matches{
+		"maison.jpg": []*compRes{
+			&compRes{"plage.jpg", 0.791355},
+			&compRes{"voiture.jpg", 0.575118},
+			&compRes{"tour.jpg", -0.243935},
+			&compRes{"vipere.jpg", 0.054535},
+		},
+		"plage.jpg": []*compRes{
+			&compRes{"voiture.jpg", 0.427355},
+			&compRes{"tour.jpg", -0.184758},
+			&compRes{"vipere.jpg", 0.082849},
+		},
+		"voiture.jpg": []*compRes{
+			&compRes{"tour.jpg", 0.020259},
+			&compRes{"vipere.jpg", -0.165653},
+		},
+		"tour.jpg": []*compRes{
+			&compRes{"vipere.jpg", 0.412750},
+		},
 	}
+	println("bestpairs")
+//	uniquify(allpairs)
+	uniquify(allpairstest)
 }
+
+
 
 /*
 diff1: +9.679229e-002 ; +2.593293e+000
