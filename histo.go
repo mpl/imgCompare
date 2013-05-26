@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
@@ -211,6 +212,7 @@ func diffDir(dirpath string) (matches, error) {
 			}
 			var res []*compRes
 			fv1 := filepath.Join(dirpath, v)
+//			fv1 := v
 			for k2, v2 := range names {
 				if k2 <= k {
 					continue
@@ -219,6 +221,7 @@ func diffDir(dirpath string) (matches, error) {
 					continue
 				}
 				fv2 := filepath.Join(dirpath, v2)
+//				fv2 := v2
 				match, err := diffFiles(fv1, fv2)
 				if err != nil {
 					log.Print(err)
@@ -227,7 +230,9 @@ func diffDir(dirpath string) (matches, error) {
 				res = append(res, &compRes{fv2, match})
 				fmt.Printf("(%v, %v) : %f\n", v, v2, match)
 			}
-			results[fv1] = res
+			if len(res) > 0 {
+				results[fv1] = res
+			}
 //			c <- 1
 		}(k1, v1)
 	}
@@ -302,22 +307,22 @@ func bestPairsToSortedPairs(m map[string]*compRes) sortedPairs {
 	return s
 }
 
-// TODO: fix fullpath vs basepath
-
-func renameAll(srcDir, destDir string, pairs sortedPairs) {
+func renameAll(pairs sortedPairs, destDir string) {
+	if destDir == "" {
+		destDir = "sorted"
+	}
 	err := os.MkdirAll(destDir, 0755)
 	if err != nil {
 		panic(err)
 	}
 	done := make(map[string]bool)
-	var ext1, name1, ext2, name2, src, dest string
+	var ext1, name1, ext2, name2, dest string
 	for k, v := range pairs {
 		if _, ok := done[v.pic1]; !ok {
 			ext1 = filepath.Ext(v.pic1)
 			name1 = fmt.Sprintf("%d%s", k*2, ext1)
-			src = filepath.Join(srcDir, v.pic1)
 			dest = filepath.Join(destDir, name1)
-			cmd := exec.Command("cp", src, dest)
+			cmd := exec.Command("cp", v.pic1, dest)
 			err := cmd.Run()
 			if err != nil {
 				panic(err)
@@ -327,9 +332,8 @@ func renameAll(srcDir, destDir string, pairs sortedPairs) {
 		if _, ok := done[v.pic2]; !ok {
 			ext2 = filepath.Ext(v.pic2)
 			name2 = fmt.Sprintf("%d%s", k*2+1, ext2)
-			src = filepath.Join(srcDir, v.pic2)
 			dest = filepath.Join(destDir, name2)
-			cmd := exec.Command("cp", src, dest)
+			cmd := exec.Command("cp", v.pic2, dest)
 			err := cmd.Run()
 			if err != nil {
 				panic(err)
@@ -340,7 +344,15 @@ func renameAll(srcDir, destDir string, pairs sortedPairs) {
 }
 
 func main() {
-	allpairs, err := diffDir("/home/mpl/Desktop/pleubian/")
+	flag.Parse()
+	args := flag.Args()
+	dir := ""
+	if len(args) != 1 {
+		dir = "/home/mpl/Desktop/test/pleubian/"
+	} else {
+		dir = args[0]
+	}
+	allpairs, err := diffDir(dir)
 	if err != nil {
 		panic(err)
 	}
@@ -369,12 +381,12 @@ func main() {
 	println("bestpairs")
 	//	bestpairs := uniquify(allpairstest)
 	bestpairs := uniquify(allpairs)
-	sortedPairs := bestPairsToSortedPairs(bestpairs)
 	println("sorted pairs")
+	sortedPairs := bestPairsToSortedPairs(bestpairs)
 	for _, v := range sortedPairs {
 		fmt.Println(*v)
 	}
-	renameAll("/home/mpl/Desktop/pleubian/", "/home/mpl/Desktop/pleubian/sorted", sortedPairs)
+	renameAll(sortedPairs, "/home/mpl/Desktop/pleubian/sorted")
 }
 
 /*
@@ -440,5 +452,13 @@ bestpairs
 (plage.jpg, voiture.jpg) : 0.427355
 (voiture.jpg, vipere.jpg) : -0.165653
 (tour.jpg, vipere.jpg) : 0.412750
+
+with sialet -> not so convincing.
+Is the initial method no good, or is it the following sort/grouping?
+
+(IMG_20130526_175706.jpg, IMG_20130526_175401.jpg) : 0.898434
+=> initial method no good.
+but is it the cross correlation, or the idea to decompose the luminance by channels that fails?
+-> I need to compare their distributions with gnuplot.
 
 */
