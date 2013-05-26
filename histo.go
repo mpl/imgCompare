@@ -8,8 +8,11 @@ import (
 	"log"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"sync"
 	"strings"
 )
 
@@ -62,7 +65,7 @@ func diff1(im1, im2 image.Image) float64 {
 	histo2 := Histo(im2)
 	cumdiff := 0
 	cumcount := 0 // == numpixels, no?
-	for lum,count := range histo1 {
+	for lum, count := range histo1 {
 		count2 := histo2[lum]
 		diff := count - count2
 		if diff < 0 {
@@ -80,7 +83,7 @@ func diff2(im1, im2 image.Image) float64 {
 	histo1 := Histo(im1)
 	histo2 := Histo(im2)
 	var cumratio float32
-	for lum,count := range histo1 {
+	for lum, count := range histo1 {
 		count2 := histo2[lum]
 		if count == 0 || count2 == 0 {
 			continue
@@ -98,7 +101,7 @@ func diff3(im1, im2 image.Image) float64 {
 	histo1 := Histo(im1)
 	histo2 := Histo(im2)
 	var cumratio float32
-	for i := 0; i<256; i++ {
+	for i := 0; i < 256; i++ {
 		count1 := histo1[uint8(i)]
 		count2 := histo2[uint8(i)]
 		if count1 == 0 || count2 == 0 {
@@ -123,7 +126,7 @@ func mean(x []float64) float64 {
 
 func denominator(x, y []float64, mx, my float64) float64 {
 	sx, sy := 0., 0.
-	for i:=0; i<len(x); i++ {
+	for i := 0; i < len(x); i++ {
 		sx += (x[i] - mx) * (x[i] - mx)
 		sy += (y[i] - my) * (y[i] - my)
 	}
@@ -137,8 +140,8 @@ func xCorrelation(x, y []float64) float64 {
 	denom := denominator(x, y, mx, my)
 
 	sxy := 0.0
-	for i:=0; i<len(x); i++ {
-		sxy += (x[i] - mx) * (y[i] - my);
+	for i := 0; i < len(x); i++ {
+		sxy += (x[i] - mx) * (y[i] - my)
 	}
 	return sxy / denom
 }
@@ -148,7 +151,7 @@ func diff4(im1, im2 image.Image) float64 {
 	histo2 := Histo(im2)
 	var x []float64
 	var y []float64
-	for i:=0; i<256; i++ {
+	for i := 0; i < 256; i++ {
 		x = append(x, float64(histo1[uint8(i)]))
 		y = append(y, float64(histo2[uint8(i)]))
 	}
@@ -178,7 +181,7 @@ func diffFiles(file1, file2 string) (float64, error) {
 }
 
 type compRes struct {
-	file string
+	file  string
 	match float64
 }
 
@@ -197,36 +200,56 @@ func diffDir(dirpath string) (matches, error) {
 	if err != nil {
 		return nil, err
 	}
+//	c := make(chan int)
+	var wg sync.WaitGroup
 	for k1, v1 := range names {
-		if !isJpeg.MatchString(strings.ToLower(v1)) {
-			continue
-		}
-		var res []*compRes
-		fv1 := filepath.Join(dirpath, v1)
-		for k2, v2 := range names {
-			if k2 <= k1 {
-				continue
+		wg.Add(1)
+		go func(k int, v string) {
+			defer wg.Done()
+			if !isJpeg.MatchString(strings.ToLower(v)) {
+				return
 			}
-			if !isJpeg.MatchString(strings.ToLower(v2)) {
-				continue
+			var res []*compRes
+			fv1 := filepath.Join(dirpath, v)
+			for k2, v2 := range names {
+				if k2 <= k {
+					continue
+				}
+				if !isJpeg.MatchString(strings.ToLower(v2)) {
+					continue
+				}
+				fv2 := filepath.Join(dirpath, v2)
+				match, err := diffFiles(fv1, fv2)
+				if err != nil {
+					log.Print(err)
+					continue
+				}
+				res = append(res, &compRes{fv2, match})
+				fmt.Printf("(%v, %v) : %f\n", v, v2, match)
 			}
-			fv2 := filepath.Join(dirpath, v2)
-			match, err := diffFiles(fv1, fv2)
-			if err != nil {
-				log.Print(err)
-				continue
-			}
-			res = append(res, &compRes{fv2, match})
-			fmt.Printf("(%v, %v) : %f\n", v1, v2, match)
-		}
-		results[fv1] = res
+			results[fv1] = res
+//			c <- 1
+		}(k1, v1)
 	}
+
+/*
+	n := 0
+	for {
+		<-c
+		n++
+		println(n)
+		if n == len(names) {
+			break
+		}
+	}
+*/
+	wg.Wait()
 	return results, nil
 }
 
 func uniquify(m matches) map[string]*compRes {
 	bestpairs := make(map[string]*compRes)
-	for k1,v1 := range m {
+	for k1, v1 := range m {
 		best := 0.
 		keep := 0
 		for k, cres := range v1 {
@@ -241,40 +264,118 @@ func uniquify(m matches) map[string]*compRes {
 	return bestpairs
 }
 
+type rankedPair struct {
+	pic1 string
+	pic2 string
+	rank float64
+}
 
-func main() {
-/*
-	allpairs, err := diffDir("/home/mpl/Pictures/pleubian/")
+type sortedPairs []*rankedPair
+
+// Len is part of sort.Interface.
+func (s sortedPairs) Len() int {
+	return len(s)
+}
+
+func (s sortedPairs) Less(i, j int) bool {
+	return math.Abs(s[i].rank) > math.Abs(s[j].rank)
+}
+
+// Swap is part of sort.Interface.
+func (s sortedPairs) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func bestPairsToSortedPairs(m map[string]*compRes) sortedPairs {
+	s := make(sortedPairs, len(m))
+	i := 0
+	for k, v := range m {
+		meh := &rankedPair{
+			pic1: k,
+			pic2: v.file,
+			rank: v.match,
+		}
+		s[i] = meh
+		i++
+	}
+	sort.Sort(s)
+	return s
+}
+
+// TODO: fix fullpath vs basepath
+
+func renameAll(srcDir, destDir string, pairs sortedPairs) {
+	err := os.MkdirAll(destDir, 0755)
 	if err != nil {
 		panic(err)
 	}
-*/
-	allpairstest := matches{
-		"maison.jpg": []*compRes{
-			&compRes{"plage.jpg", 0.791355},
-			&compRes{"voiture.jpg", 0.575118},
-			&compRes{"tour.jpg", -0.243935},
-			&compRes{"vipere.jpg", 0.054535},
-		},
-		"plage.jpg": []*compRes{
-			&compRes{"voiture.jpg", 0.427355},
-			&compRes{"tour.jpg", -0.184758},
-			&compRes{"vipere.jpg", 0.082849},
-		},
-		"voiture.jpg": []*compRes{
-			&compRes{"tour.jpg", 0.020259},
-			&compRes{"vipere.jpg", -0.165653},
-		},
-		"tour.jpg": []*compRes{
-			&compRes{"vipere.jpg", 0.412750},
-		},
+	done := make(map[string]bool)
+	var ext1, name1, ext2, name2, src, dest string
+	for k, v := range pairs {
+		if _, ok := done[v.pic1]; !ok {
+			ext1 = filepath.Ext(v.pic1)
+			name1 = fmt.Sprintf("%d%s", k*2, ext1)
+			src = filepath.Join(srcDir, v.pic1)
+			dest = filepath.Join(destDir, name1)
+			cmd := exec.Command("cp", src, dest)
+			err := cmd.Run()
+			if err != nil {
+				panic(err)
+			}
+			done[v.pic1] = true
+		}
+		if _, ok := done[v.pic2]; !ok {
+			ext2 = filepath.Ext(v.pic2)
+			name2 = fmt.Sprintf("%d%s", k*2+1, ext2)
+			src = filepath.Join(srcDir, v.pic2)
+			dest = filepath.Join(destDir, name2)
+			cmd := exec.Command("cp", src, dest)
+			err := cmd.Run()
+			if err != nil {
+				panic(err)
+			}
+			done[v.pic2] = true
+		}
 	}
-	println("bestpairs")
-//	uniquify(allpairs)
-	uniquify(allpairstest)
 }
 
-
+func main() {
+	allpairs, err := diffDir("/home/mpl/Desktop/pleubian/")
+	if err != nil {
+		panic(err)
+	}
+	/*
+		allpairstest := matches{
+			"maison.jpg": []*compRes{
+				&compRes{"plage.jpg", 0.791355},
+				&compRes{"voiture.jpg", 0.575118},
+				&compRes{"tour.jpg", -0.243935},
+				&compRes{"vipere.jpg", 0.054535},
+			},
+			"plage.jpg": []*compRes{
+				&compRes{"voiture.jpg", 0.427355},
+				&compRes{"tour.jpg", -0.184758},
+				&compRes{"vipere.jpg", 0.082849},
+			},
+			"voiture.jpg": []*compRes{
+				&compRes{"tour.jpg", 0.020259},
+				&compRes{"vipere.jpg", -0.165653},
+			},
+			"tour.jpg": []*compRes{
+				&compRes{"vipere.jpg", 0.412750},
+			},
+		}
+	*/
+	println("bestpairs")
+	//	bestpairs := uniquify(allpairstest)
+	bestpairs := uniquify(allpairs)
+	sortedPairs := bestPairsToSortedPairs(bestpairs)
+	println("sorted pairs")
+	for _, v := range sortedPairs {
+		fmt.Println(*v)
+	}
+	renameAll("/home/mpl/Desktop/pleubian/", "/home/mpl/Desktop/pleubian/sorted", sortedPairs)
+}
 
 /*
 diff1: +9.679229e-002 ; +2.593293e+000
@@ -332,5 +433,12 @@ diff4:
 
 -> fuck yeah!
 
+uniquify:
+
+bestpairs
+(maison.jpg, plage.jpg) : 0.791355
+(plage.jpg, voiture.jpg) : 0.427355
+(voiture.jpg, vipere.jpg) : -0.165653
+(tour.jpg, vipere.jpg) : 0.412750
 
 */
